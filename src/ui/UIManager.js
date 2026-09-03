@@ -114,6 +114,22 @@ export class UIManager {
       });
     }
 
+    // Start PvP Match — send all players to arena with random team split
+    const btnStartPvP = document.getElementById('btn-start-pvp');
+    if (btnStartPvP) {
+      btnStartPvP.addEventListener('click', () => {
+        const pCount = this.game.network?.partyMembers?.size || 1;
+        if (pCount < 2) {
+          this.addChatMessage('⚠️ Minimal 2 pemain untuk PvP! Ajak teman dulu.', '#f97316');
+          return;
+        }
+        this.addChatMessage('⚔️ Memulai PvP — semua pemain masuk arena...', '#f97316');
+        setTimeout(() => {
+          this.game.network.startPvPMatch();
+        }, 500);
+      });
+    }
+
     // Join Room Submit
     const btnJoinSubmit = document.getElementById('btn-join-room-submit');
     const inputJoinCode = document.getElementById('input-join-code');

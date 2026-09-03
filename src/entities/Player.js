@@ -424,6 +424,7 @@ export class Player {
     const enemies = this.game.enemies;
     let hitAny = false;
 
+    // --- Hit AI enemies ---
     enemies.forEach(enemy => {
       if (enemy.isDead) return;
       const dx = enemy.position.x - this.position.x;
@@ -436,21 +437,18 @@ export class Player {
         while (angleDiff > Math.PI) angleDiff = Math.abs(angleDiff - Math.PI * 2);
 
         if (angleDiff <= coneAngle / 2) {
-          // HIT ENEMY!
           hitAny = true;
           const isCrit = Math.random() < this.critRate;
           const rawDamage = Math.floor(this.attackPower * damageMultiplier * (isCrit ? 1.75 : 1.0) * (0.9 + Math.random() * 0.2));
-          
+
           enemy.takeDamage(rawDamage, isCrit);
           audioManager.playHitImpact(isCrit);
           this.game.engine.spawnImpactParticles(enemy.position, isCrit ? 0xf59e0b : 0xffffff, 12);
 
-          // Increment combo
           this.comboCount++;
           this.comboTimer = 3.5;
           this.game.ui.updateCombo(this.comboCount);
 
-          // Sync enemy damage to network party
           this.game.network.broadcast({
             type: 'ENEMY_HIT',
             enemyId: enemy.id,
@@ -460,6 +458,61 @@ export class Player {
         }
       }
     });
+
+    // --- PvP: Hit real remote players when in arena ---
+    if (this.game.currentZone === 'arena') {
+      this.game.remotePlayers.forEach((remotePlayer, peerId) => {
+        if (remotePlayer.isBot || remotePlayer.isDead) return;
+
+        // Don't hit same-team players (team Blue vs Red)
+        if (remotePlayer.pvpTeam && remotePlayer.pvpTeam === this.pvpTeam) return;
+
+        const dx = remotePlayer.position.x - this.position.x;
+        const dz = remotePlayer.position.z - this.position.z;
+        const dist = Math.hypot(dx, dz);
+
+        if (dist <= radius) {
+          const angleToTarget = Math.atan2(dx, dz);
+          let angleDiff = Math.abs(angleToTarget - this.rotationY);
+          while (angleDiff > Math.PI) angleDiff = Math.abs(angleDiff - Math.PI * 2);
+
+          if (angleDiff <= coneAngle / 2) {
+            hitAny = true;
+            const isCrit = Math.random() < this.critRate;
+            const rawDamage = Math.floor(this.attackPower * damageMultiplier * (isCrit ? 1.75 : 1.0) * (0.9 + Math.random() * 0.2));
+
+            // Show visual hit on remote player
+            this.game.ui.spawnFloatingNumber(remotePlayer.position, `${isCrit ? '💥CRIT! ' : ''}${rawDamage}`, isCrit ? 'critical' : 'normal');
+            this.game.engine.spawnImpactParticles(remotePlayer.position, isCrit ? 0xf59e0b : 0xff4444, 14);
+            audioManager.playHitImpact(isCrit);
+
+            this.comboCount++;
+            this.comboTimer = 3.5;
+            this.game.ui.updateCombo(this.comboCount);
+
+            // Send PVP_DAMAGE to the targeted player over the network
+            const targetConn = this.game.network.connections.get(peerId);
+            if (targetConn && targetConn.open) {
+              targetConn.send({
+                type: 'PVP_DAMAGE',
+                attackerId: this.game.network.myPeerId,
+                attackerName: this.name,
+                damage: rawDamage,
+                isCrit: isCrit
+              });
+            }
+
+            // Track PvP kill locally if remote HP reaches 0
+            remotePlayer.pvpHp = (remotePlayer.pvpHp ?? remotePlayer.maxHp) - rawDamage;
+            if (remotePlayer.pvpHp <= 0) {
+              remotePlayer.pvpHp = remotePlayer.maxHp; // Reset for respawn
+              this.game.triggerPvPKill(true);
+              this.game.ui.addChatMessage(`⚔️ ${this.name} mengalahkan ${remotePlayer.name} dalam PvP!`, '#fbbf24');
+            }
+          }
+        }
+      });
+    }
 
     if (hitAny) {
       this.game.engine.triggerScreenShake(0.15);

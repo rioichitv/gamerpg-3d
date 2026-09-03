@@ -285,6 +285,27 @@ export class NetworkManager {
       case 'ENEMY_HIT':
         this.game.applyEnemyDamage(data.enemyId, data.damage, data.isCrit, false);
         break;
+
+      case 'PVP_DAMAGE':
+        // We were hit by a real player in PvP!
+        if (this.game.player) {
+          this.game.player.takeDamage(data.damage);
+          this.game.ui.addChatMessage(`💀 ${data.attackerName} menyerangmu! -${data.damage} HP${data.isCrit ? ' (CRITICAL!)' : ''}`, '#f87171');
+        }
+        break;
+
+      case 'START_PVP':
+        // Host invites everyone to arena
+        this.game.changeZone('arena', false);
+        if (this.game.player) {
+          this.game.player.pvpTeam = data.teams?.[this.myPeerId] || 'blue';
+        }
+        this.game.ui.addChatMessage(`⚔️ Semua pemain memasuki Arena PvP! Tim kamu: ${this.game.player?.pvpTeam?.toUpperCase()}`, '#38bdf8');
+        break;
+
+      case 'PVP_KILL':
+        this.game.triggerPvPKill(data.team === 'blue');
+        break;
     }
   }
 
@@ -304,6 +325,30 @@ export class NetworkManager {
       hp: 1000, maxHp: 1000, level: 1,
       isLeader: true
     });
+  }
+
+  // Call this to start a PvP match - sends all players to arena with random team assignment
+  startPvPMatch() {
+    if (!this.peer) return;
+    const allIds = [this.myPeerId, ...Array.from(this.connections.keys())];
+    const teams = {};
+    allIds.forEach((id, idx) => {
+      teams[id] = idx % 2 === 0 ? 'blue' : 'red';
+    });
+
+    // Assign own team
+    if (this.game.player) this.game.player.pvpTeam = teams[this.myPeerId];
+
+    // Tell all peers to enter arena with their assigned team
+    this.broadcast({ type: 'START_PVP', teams });
+
+    // Enter arena ourselves
+    this.game.changeZone('arena', false);
+    this.game.ui.addChatMessage(`⚔️ PvP dimulai! Tim kamu: ${teams[this.myPeerId]?.toUpperCase()}`, '#38bdf8');
+  }
+
+  broadcastPvPKill(team) {
+    this.broadcast({ type: 'PVP_KILL', team });
   }
 
   joinRoom(targetCode) {
