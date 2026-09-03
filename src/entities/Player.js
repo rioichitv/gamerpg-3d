@@ -167,6 +167,12 @@ export class Player {
   }
 
   update(dt) {
+    // While dead: freeze everything
+    if (this.isDead) {
+      this.isMoving = false;
+      return;
+    }
+
     // 1. Update Cooldowns
     for (const key in this.cooldowns) {
       if (this.cooldowns[key] > 0) {
@@ -186,12 +192,14 @@ export class Player {
       }
     }
 
-    // 3. Natural HP & MP regeneration
-    if (this.hp < this.maxHp) {
-      this.hp = Math.min(this.maxHp, this.hp + 6 * dt);
-    }
-    if (this.mp < this.maxMp) {
-      this.mp = Math.min(this.maxMp, this.mp + 15 * dt);
+    // 3. Natural HP & MP regeneration (not while dead)
+    if (!this.isDead) {
+      if (this.hp < this.maxHp) {
+        this.hp = Math.min(this.maxHp, this.hp + 6 * dt);
+      }
+      if (this.mp < this.maxMp) {
+        this.mp = Math.min(this.maxMp, this.mp + 15 * dt);
+      }
     }
 
     // 4. Handle Movement & Action Lock
@@ -520,7 +528,7 @@ export class Player {
   }
 
   takeDamage(amount) {
-    if (this.isInvincible || this.hp <= 0) return;
+    if (this.isInvincible || this.isDead) return;
     const reducedDamage = Math.max(10, Math.floor(amount * (100 / (100 + this.baseDef))));
     this.hp = Math.max(0, this.hp - reducedDamage);
 
@@ -529,13 +537,79 @@ export class Player {
     this.game.engine.triggerScreenShake(0.4);
 
     if (this.hp <= 0) {
-      this.game.ui.addChatMessage('💀 Anda telah gugur dalam pertempuran! Respawn...', '#ef4444');
+      this.hp = 0;
+      this.isDead = true;
+      this.animState = 'dodge'; // collapse / knocked-down animation
+
+      audioManager.playHitImpact(true);
+      this.game.engine.spawnImpactParticles(this.position, 0xef4444, 30, 0.5);
+
+      // Red flash overlay on death
+      this._showDeathOverlay();
+
+      this.game.ui.addChatMessage('💀 Anda telah gugur! Respawn dalam 3 detik...', '#ef4444');
+
+      // In PvP mode, also broadcast kill to enemy team
+      if (this.game.currentZone === 'arena') {
+        this.game.network?.broadcastPvPKill?.('red'); // Blue team scored
+      }
+
       setTimeout(() => {
+        this.isDead = false;
         this.hp = this.maxHp;
-        this.position.set(0, 0, 25);
+        this.mp = this.maxMp;
+        this.isInvincible = true;
+        this.animState = 'idle';
+
+        // Respawn location depends on zone
+        if (this.game.currentZone === 'arena') {
+          this.position.set(0, 0, 18);
+        } else {
+          this.position.set(0, 0, 45);
+        }
         this.rotationY = Math.PI;
-      }, 2000);
+
+        this.game.ui.addChatMessage('✨ Anda telah respawn! Invincible selama 3 detik.', '#34d399');
+        this.game.engine.triggerScreenShake(0);
+
+        // 3 seconds of spawn protection (invincibility)
+        setTimeout(() => {
+          this.isInvincible = false;
+        }, 3000);
+      }, 3000);
     }
+  }
+
+  _showDeathOverlay() {
+    let overlay = document.getElementById('death-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'death-overlay';
+      overlay.style.cssText = `
+        position: fixed; inset: 0; z-index: 9999; pointer-events: none;
+        background: rgba(180, 0, 0, 0.55);
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        color: #fff; font-family: 'Cinzel Decorative', serif;
+        animation: deathFadeIn 0.4s ease-out;
+      `;
+      overlay.innerHTML = `
+        <div style="font-size:3rem; font-weight:900; text-shadow: 0 0 40px #ef4444; letter-spacing:0.1em;">ANDA TELAH GUGUR</div>
+        <div style="font-size:1rem; margin-top:1rem; color:#fca5a5;">Respawn dalam 3 detik...</div>
+        <style>
+          @keyframes deathFadeIn { from { opacity: 0; } to { opacity: 1; } }
+          @keyframes deathFadeOut { from { opacity: 1; } to { opacity: 0; } }
+        </style>
+      `;
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = 'flex';
+    overlay.style.animation = 'deathFadeIn 0.4s ease-out';
+
+    // Auto-remove after respawn
+    setTimeout(() => {
+      overlay.style.animation = 'deathFadeOut 0.6s ease-out';
+      setTimeout(() => { overlay.style.display = 'none'; }, 600);
+    }, 2800);
   }
 
   syncNetwork() {
